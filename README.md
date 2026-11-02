@@ -20,7 +20,7 @@ The `FROM` line pins `python:3.12-slim` by digest as well as tag, so a rebuild o
 
 `git` and `gh` are runtime dependencies, not build tools: Claude Code shells out to both.
 
-The CLI is installed with Anthropic's native installer, which takes the version as an argument and needs no Node. The install script itself is fetched live and is not version-pinned, so a build verifies the version it got rather than the script it ran; each release also publishes a signed `manifest.json` with a per-platform SHA256 if stronger verification is wanted.
+The CLI is installed with Anthropic's native installer, which takes the version as an argument and needs no Node. The install script itself is fetched live and is not version-pinned, so the build checks the binary it left behind against the `linux-x64` SHA256 in that release's `manifest.json` and fails on a mismatch. A build therefore proves which bytes it installed, not merely which version it asked for.
 
 Two ordering constraints in the Dockerfile:
 

@@ -31,7 +31,16 @@ RUN chown app:app /app
 # The CLI installs into the invoking user's home, so it is installed as that user.
 USER app
 WORKDIR /tmp
-RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION}
+# The installer script is fetched live and is not itself version-pinned, so the binary it
+# leaves behind is checked against the SHA256 the release manifest publishes for this platform.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION} \
+    && curl -fsSL -o /tmp/manifest.json \
+        "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/manifest.json" \
+    && expected="$(sed -n '/"linux-x64"[[:space:]]*:/,/}/p' /tmp/manifest.json \
+        | sed -n 's/.*"checksum"[[:space:]]*:[[:space:]]*"\([a-f0-9]\{64\}\)".*/\1/p' | head -1)" \
+    && test -n "$expected" \
+    && echo "${expected}  $(readlink -f /home/app/.local/bin/claude)" | sha256sum -c - \
+    && rm /tmp/manifest.json
 
 ENV PATH=/home/app/.local/bin:$PATH
 # Blocks the CLI's background self-update, so the pinned version is the version that runs.
