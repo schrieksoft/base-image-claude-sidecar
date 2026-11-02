@@ -4,7 +4,7 @@ Static base image for the Snap CD Agent's Claude sidecar. It bakes the OS-level 
 
 | Dockerfile   | Adds                                                                                   | Published as                                              |
 |--------------|----------------------------------------------------------------------------------------|-----------------------------------------------------------|
-| `Dockerfile` | `nodejs` (Node 22 from NodeSource, with npm), `git`, `curl`, `ca-certificates`, `gnupg`, `gh`, `uv`, `@anthropic-ai/claude-code`, the non-root `app` user | `ghcr.io/schrieksoft/base-image-claude-sidecar:<SemVer>` |
+| `Dockerfile` | `git`, `curl`, `ca-certificates`, `gh`, `uv`, the Claude Code CLI, the non-root `app` user | `ghcr.io/schrieksoft/base-image-claude-sidecar:<SemVer>` |
 
 ## Pinning
 
@@ -12,22 +12,26 @@ Everything is pinned, and every pin is an ARG at the top of the Dockerfile:
 
 | ARG | Pins |
 |---|---|
-| `CLAUDE_CODE_VERSION` | the npm version of `@anthropic-ai/claude-code` |
-| `GIT_VERSION`, `CA_CERTIFICATES_VERSION`, `CURL_VERSION`, `GNUPG_VERSION` | Debian package versions from the `python:3.12-slim` apt sources |
+| `CLAUDE_CODE_VERSION` | the Claude Code CLI version, passed to the installer |
+| `GIT_VERSION`, `CA_CERTIFICATES_VERSION`, `CURL_VERSION` | Debian package versions from the `python:3.12-slim` apt sources |
 | `GH_VERSION` | the GitHub CLI version from `cli.github.com/packages` |
-| `NODEJS_VERSION` | Node from `deb.nodesource.com/node_22.x`; this package bundles npm, so there is no separate npm pin |
 
 The `FROM` line pins `python:3.12-slim` by digest as well as tag, so a rebuild of the same commit produces the same image.
 
 `git` and `gh` are runtime dependencies, not build tools: Claude Code shells out to both.
 
-Node comes from NodeSource rather than Debian because Claude Code declares `node >=22.0.0` and Debian trixie ships Node 20. Installing the Debian package makes npm emit `EBADENGINE` at build time and leaves the CLI running on a Node version upstream does not support.
+The CLI is installed with Anthropic's native installer, which takes the version as an argument and needs no Node. The install script itself is fetched live and is not version-pinned, so a build verifies the version it got rather than the script it ran; each release also publishes a signed `manifest.json` with a per-platform SHA256 if stronger verification is wanted.
+
+Two ordering constraints in the Dockerfile:
+
+- The CLI installs into the invoking user's home, so the install runs as `app` and `/home/app/.local/bin` goes on `PATH`.
+- `DISABLE_UPDATES=1` is set after the install. Set before it, the installer reports that updates are disabled, prints a success message, exits 0 and installs nothing.
 
 ### Updating the Claude Code CLI
 
 This is the common case and does not require a Snap CD release:
 
-1. `npm view @anthropic-ai/claude-code version` to get the target.
+1. Read the current version from `https://claude.ai/install.sh`'s release channel, or `npm view @anthropic-ai/claude-code version`, which tracks the same releases.
 2. Bump `CLAUDE_CODE_VERSION` here, commit, push to `main`.
 3. Bump the `FROM` tag in `snapcd/SnapCd.Agent/Sidecars/Claude/Dockerfile` to the new SemVer.
 
@@ -38,17 +42,13 @@ Debian point releases retire old package versions from the archive, so a stale p
 ```bash
 docker run --rm python:3.12-slim bash -c '
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y --no-install-recommends curl ca-certificates gnupg >/dev/null 2>&1
+apt-get install -y --no-install-recommends curl ca-certificates >/dev/null 2>&1
 install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
 chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
 apt-get update -qq >/dev/null 2>&1
-curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-chmod go+r /etc/apt/keyrings/nodesource.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
-apt-get update -qq >/dev/null 2>&1
-for p in nodejs git ca-certificates curl gnupg gh; do
+for p in git ca-certificates curl gh; do
   echo "$p=$(apt-cache policy $p | sed -n "s/^  Candidate: //p")"
 done'
 ```
@@ -67,7 +67,7 @@ Verify the tools are present:
 
 ```bash
 docker run --rm base-image-claude-sidecar:local \
-    sh -c "node --version && npm --version && git --version && gh --version | head -1 && uv --version && claude --version"
+    sh -c "git --version && gh --version | head -1 && uv --version && claude --version"
 ```
 
 ### Trying it as the sidecar's base
